@@ -1,0 +1,6 @@
+build/
+*.o
+*.psk
+*.key
+*.pcap
+.DS_Store
