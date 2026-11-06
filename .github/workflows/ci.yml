@@ -1,15 +1,16 @@
 name: ci
 on: [push, pull_request]
+
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Install dependencies
-        run: sudo apt-get update && sudo apt-get install -y build-essential pkg-config libssl-dev libnetfilter-queue-dev
+        run: sudo apt-get update && sudo apt-get install -y build-essential pkg-config libssl-dev libnetfilter-queue-dev iproute2 iptables ethtool tcpdump python3 openssl
       - name: Build
-        run: make
+        run: chmod +x scripts/*.sh tests/e2e.sh && make
       - name: Unit tests
         run: make test
       - name: End-to-end test (network namespaces)
-        run: sudo apt-get install -y iproute2 iptables ethtool tcpdump python3 && sudo tests/e2e.sh
+        run: sudo tests/e2e.sh
