@@ -8,8 +8,8 @@ PC1 ──► Device1 ═══════ protected link ═══════
 ```
 
 * **Key exchange:** authenticated Diffie–Hellman (RFC 3526 group 14, 2048-bit) between Device1 and Device2, run **before** any protected data is forwarded.
-* **Protection:** for each selected TCP/IPv4 packet only the **TCP payload** is encrypted with **AES-256-GCM**; the 16-byte **authentication tag is appended to the encrypted payload**.
-* **No encapsulation:** original IP and TCP headers are kept (addresses, ports, seq/ack, flags, options). No UDP tunnel, no custom protocol header. Only IP total length and the IP/TCP checksums are rewritten.
+* **Protection:** for each selected TCP/IPv4 packet only the **TCP payload** is encrypted with **AES-256-GCM**; the 16-byte **authentication tag is appended to the encrypted payload**. A selected empty segment carries a tag over its headers and empty plaintext.
+* **No encapsulation:** original IP and TCP headers are kept (addresses, ports, seq/ack, flags, options). No UDP tunnel, no custom protocol header. Only IP total length and the IP/TCP checksums change on the wire. Each gateway reverses the kernel’s forwarding TTL decrement for selected packets.
 * **Receiver:** verifies the tag, decrypts, restores the original packet, recalculates IP and TCP checksums and forwards it to the destination host.
 * **Unique nonce per packet:** `nonce = 4-byte per-direction salt ‖ 64-bit packet counter`, counter incremented for every encrypted packet, separate keys per direction (details below).
 
@@ -33,7 +33,7 @@ docs/TESTING.md      how everything was tested, expected output
 
 ```bash
 sudo apt install build-essential pkg-config libssl-dev libnetfilter-queue-dev \
-                 iproute2 iptables ethtool python3 tcpdump
+                 iproute2 iptables ethtool python3 tcpdump openssl
 ```
 Running the daemon needs root (or `CAP_NET_ADMIN`). `tcpdump` is optional (wire inspection in the e2e test).
 
@@ -44,6 +44,8 @@ make            # builds build/secgw
 make test       # unit tests: crypto KATs, packet round trips, tamper/replay/loss, DH, handshake
 sudo tests/e2e.sh   # full PC1→Dev1→Dev2→PC2 test in network namespaces
 ```
+
+The included GitHub Actions workflow builds and runs both test suites on Linux. Both gateways must use the SGW2 revision of the protocol.
 
 ## Quick start – the 4-node lab (single machine)
 

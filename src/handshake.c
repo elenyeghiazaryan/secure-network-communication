@@ -10,7 +10,7 @@
 
 int g_verbose = 0;   /* shared by the whole program (defined here so the test binaries link) */
 
-#define MAGIC "SGW1"
+#define MAGIC "SGW2"
 #define M1_LEN (4 + 32 + DH_PUB_LEN)
 #define M2_BODY (4 + 32 + DH_PUB_LEN)
 #define IO_TIMEOUT_S 5
@@ -59,13 +59,13 @@ static int client_exchange(int fd, const uint8_t *psk, size_t pl, session_t *out
     if (wr_full(fd, m1, sizeof m1)) { LOGE("handshake: send M1 failed"); goto done; }
     if (rd_full(fd, m2, sizeof m2)) { LOGE("handshake: receive M2 failed"); goto done; }
     if (memcmp(m2, MAGIC, 4)) { LOGE("handshake: bad magic in M2"); goto done; }
-    if (mac(psk, pl, "SGW1-server", m1, sizeof m1, m2, M2_BODY, mac_s) ||
+    if (mac(psk, pl, "SGW2-server", m1, sizeof m1, m2, M2_BODY, mac_s) ||
         !ct_equal(mac_s, m2 + M2_BODY, SHA256_LEN)) {
         LOGE("handshake: server authentication FAILED (wrong PSK or MITM)");
         goto done;
     }
     if (dh_shared(dh, m2 + 36, z)) { LOGE("handshake: invalid DH value from server"); goto done; }
-    if (mac(psk, pl, "SGW1-client", m1, sizeof m1, m2, M2_BODY, mac_c) ||
+    if (mac(psk, pl, "SGW2-client", m1, sizeof m1, m2, M2_BODY, mac_c) ||
         wr_full(fd, mac_c, sizeof mac_c)) goto done;
     if (session_derive(out, 1, z, m1 + 4, m2 + 4)) goto done;
     rc = 0;
@@ -109,10 +109,10 @@ static int server_exchange(int fd, const uint8_t *psk, size_t pl, session_t *out
     memcpy(m2, MAGIC, 4);
     if (secure_random(m2 + 4, 32) || dh_public(dh, m2 + 36)) goto done;
     if (dh_shared(dh, m1 + 36, z)) { LOGE("handshake: invalid DH value from client"); goto done; }
-    if (mac(psk, pl, "SGW1-server", m1, sizeof m1, m2, M2_BODY, m2 + M2_BODY)) goto done;
+    if (mac(psk, pl, "SGW2-server", m1, sizeof m1, m2, M2_BODY, m2 + M2_BODY)) goto done;
     if (wr_full(fd, m2, sizeof m2)) goto done;
     if (rd_full(fd, m3, sizeof m3)) { LOGE("handshake: receive M3 failed"); goto done; }
-    if (mac(psk, pl, "SGW1-client", m1, sizeof m1, m2, M2_BODY, exp) || !ct_equal(exp, m3, SHA256_LEN)) {
+    if (mac(psk, pl, "SGW2-client", m1, sizeof m1, m2, M2_BODY, exp) || !ct_equal(exp, m3, SHA256_LEN)) {
         LOGE("handshake: client authentication FAILED (wrong PSK or MITM)");
         goto done;
     }

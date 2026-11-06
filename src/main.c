@@ -68,6 +68,10 @@ static int cb(struct nfq_q_handle *qh, struct nfgenmsg *nfmsg, struct nfq_data *
         G.passthru++;
         return nfq_set_verdict(qh, id, NF_ACCEPT, 0, NULL);
     }
+    if (rc != PKT_PARSE_OK || pkt_restore_forward_ttl(work) != 0) {
+        G.drop_other++;
+        return nfq_set_verdict(qh, id, NF_DROP, 0, NULL);
+    }
     rc = q->encrypt ? pkt_protect(&G.sess, work, (size_t)len, sizeof work, &newlen)
                     : pkt_unprotect(&G.sess, work, (size_t)len, &newlen);
     switch (rc) {
@@ -76,7 +80,7 @@ static int cb(struct nfq_q_handle *qh, struct nfgenmsg *nfmsg, struct nfq_data *
         LOGD("%s ok: %d -> %zu bytes", q->encrypt ? "encrypt" : "decrypt", len, newlen);
         return nfq_set_verdict(qh, id, NF_ACCEPT, (uint32_t)newlen, work);
     case PKT_UNCHANGED:
-        G.passthru++;                      /* TCP without payload (SYN/ACK/FIN...) */
+        G.passthru++;
         return nfq_set_verdict(qh, id, NF_ACCEPT, 0, NULL);
     case PKT_ERR_AUTH:
         G.drop_auth++;

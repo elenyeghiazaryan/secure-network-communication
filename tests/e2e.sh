@@ -29,7 +29,7 @@ PY
 }
 
 echo "== 1. without the secure channel, protected traffic must be BLOCKED (fail closed)"
-ip netns exec dev1 scripts/device_rules.sh up lan wan $PORT >/dev/null
+ip netns exec dev1 scripts/device_rules.sh up lan wan $PORT >/dev/null || exit 1
 if timeout 6 bash -c "ip netns exec pc1 python3 -c \"import urllib.request;urllib.request.urlopen('http://10.0.2.2:$PORT/secret.txt',timeout=3)\"" >/dev/null 2>&1; then
   bad "traffic flowed although no secgw was running"; else ok "no plaintext leak while the channel is down"; fi
 ip netns exec dev1 scripts/device_rules.sh down lan wan $PORT >/dev/null
@@ -55,6 +55,27 @@ if command -v tcpdump >/dev/null; then
   kill $TD1 $TD2 2>/dev/null; sleep 1
   grep -qa "$MARK" $T/lan.pcap && ok "control: marker visible on the host-side link" || bad "control failed: marker not seen on LAN link (capture problem)"
   grep -qa "$MARK" $T/wan.pcap && bad "PLAINTEXT marker visible between the devices!" || ok "marker NOT visible between the devices (payload encrypted)"
+  # The first PC1 SYN has no application data and must still gain a tag.
+  for link in lan wan; do
+    tcpdump -nv -r "$T/$link.pcap" -c 1 \
+      'src host 10.0.1.2 and tcp[tcpflags] & tcp-syn != 0' >"$T/$link.syn" 2>/dev/null
+  done
+  if python3 - "$T/lan.syn" "$T/wan.syn" <<'PYTHON'
+import re
+import sys
+from pathlib import Path
+
+def fields(path):
+    match = re.search(r"ttl (\d+),[^\n]*length (\d+)\)", Path(path).read_text())
+    assert match, f"missing SYN or IPv4 header in {path}"
+    return tuple(map(int, match.groups()))
+
+lan_ttl, lan_length = fields(sys.argv[1])
+wan_ttl, wan_length = fields(sys.argv[2])
+assert lan_ttl == wan_ttl, (lan_ttl, wan_ttl)
+assert wan_length == lan_length + 16, (lan_length, wan_length)
+PYTHON
+  then ok "wire SYN retains TTL and gains exactly 16 bytes"; else bad "wire SYN TTL or length mismatch"; fi
 else echo "  (tcpdump not installed - wire inspection skipped)"; fi
 
 echo "== 5. unselected port passes through untouched"

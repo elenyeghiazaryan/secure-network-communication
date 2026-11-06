@@ -1,7 +1,7 @@
 #include "packet.h"
 #include <string.h>
 
-#define AAD_LEN 21
+#define AAD_LEN 120 /* Maximum combined IPv4 and TCP header length. */
 #define MAX_IP_TOTAL 65535
 
 // checksums 
@@ -73,13 +73,25 @@ int pkt_is_selected(const pkt_view_t *v, const uint16_t *ports, size_t n)
     return 0;
 }
 
-/* AAD = src ip | dst ip | sport | dport | seq | ack | tcp flags (all immutable in transit) */
-static void build_aad(const pkt_view_t *v, uint8_t aad[AAD_LEN])
+/* Bind the original IP/TCP headers, including TTL and options. Normalize
+ * the original total length and the two checksums across both wire forms. */
+static size_t build_aad(const pkt_view_t *v, uint16_t original_len, uint8_t aad[AAD_LEN])
 {
-    memcpy(aad, v->ip + 12, 8);
-    memcpy(aad + 8, v->tcp, 4);          /* sport, dport */
-    memcpy(aad + 12, v->tcp + 4, 8);     /* seq, ack     */
-    aad[20] = v->tcp[13];                /* flags        */
+    const size_t length = v->ihl + v->thl;
+    memcpy(aad, v->ip, length);
+    put16(aad + 2, original_len);
+    put16(aad + 10, 0);
+    put16(aad + v->ihl + 16, 0);
+    return length;
+}
+
+int pkt_restore_forward_ttl(uint8_t *ip)
+{
+    /* Linux decrements TTL before invoking the IPv4 FORWARD hook. */
+    if (ip[8] == 0 || ip[8] == 255)
+        return -1;
+    ++ip[8];
+    return 0;
 }
 
 // protect
@@ -90,16 +102,14 @@ int pkt_protect(session_t *s, uint8_t *buf, size_t len, size_t cap, size_t *newl
     if (pr == PKT_NOT_APPLICABLE) { *newlen = len; return PKT_UNCHANGED; }
     if (pr != PKT_PARSE_OK) return PKT_ERR_MALFORMED;
     if (!s || !s->established) return PKT_ERR_NOSESSION;
-    if (v.plen == 0) { *newlen = len; return PKT_UNCHANGED; }          /* SYN/ACK/FIN... */
     if (s->tx_ctr >= SESSION_MAX_PKTS) return PKT_ERR_EXHAUSTED;
     if (v.total + GCM_TAG_LEN > MAX_IP_TOTAL || v.total + GCM_TAG_LEN > cap) return PKT_ERR_NOSPACE;
 
-    build_aad(&v, aad);
-    session_build_nonce(s->tx_salt, s->tx_ctr, nonce);
-    if (aes256gcm_encrypt(s->tx_key, nonce, aad, AAD_LEN, v.payload, v.plen,
+    const size_t aadlen = build_aad(&v, (uint16_t)v.total, aad);
+    session_build_nonce(s->tx_salt, s->tx_ctr++, nonce);
+    if (aes256gcm_encrypt(s->tx_key, nonce, aad, aadlen, v.payload, v.plen,
                           v.payload, v.payload + v.plen))
         return PKT_ERR_CRYPTO;
-    s->tx_ctr++;                                   /* never reuse a nonce */
     put16(buf + 2, (uint16_t)(v.total + GCM_TAG_LEN));
     pkt_fix_checksums(buf);
     *newlen = v.total + GCM_TAG_LEN;
@@ -107,13 +117,13 @@ int pkt_protect(session_t *s, uint8_t *buf, size_t len, size_t cap, size_t *newl
 }
 
 //unprotect 
-static int try_counter(session_t *s, const pkt_view_t *v, const uint8_t *aad, uint64_t c,
+static int try_counter(session_t *s, const pkt_view_t *v, const uint8_t *aad, size_t aadlen, uint64_t c,
                        uint8_t *scratch)
 {
     uint8_t nonce[GCM_NONCE_LEN];
     size_t ctlen = v->plen - GCM_TAG_LEN;
     session_build_nonce(s->rx_salt, c, nonce);
-    return aes256gcm_decrypt(s->rx_key, nonce, aad, AAD_LEN, v->payload, ctlen,
+    return aes256gcm_decrypt(s->rx_key, nonce, aad, aadlen, v->payload, ctlen,
                              v->payload + ctlen, scratch);
 }
 
@@ -126,20 +136,20 @@ int pkt_unprotect(session_t *s, uint8_t *buf, size_t len, size_t *newlen)
     if (pr == PKT_NOT_APPLICABLE) { *newlen = len; return PKT_UNCHANGED; }
     if (pr != PKT_PARSE_OK) return PKT_ERR_MALFORMED;
     if (!s || !s->established) return PKT_ERR_NOSESSION;
-    if (v.plen == 0) { *newlen = len; return PKT_UNCHANGED; }
     if (v.plen < GCM_TAG_LEN) return PKT_ERR_TOOSHORT;
 
-    build_aad(&v, aad);
+    const size_t aadlen = build_aad(&v, (uint16_t)(v.total - GCM_TAG_LEN), aad);
     /* 1) expected counter and the packets ahead of it (loss tolerance) */
     for (uint64_t k = 0; k < RX_AHEAD && !ok; k++) {
         uint64_t c = s->rx_next + k;
-        if (try_counter(s, &v, aad, c, scratch) == 0) { ok = 1; found = c; }
+        if (c >= SESSION_MAX_PKTS) break;
+        if (try_counter(s, &v, aad, aadlen, c, scratch) == 0) { ok = 1; found = c; }
     }
     /* 2) not-yet-seen counters behind it (reordering); seen ones = replay */
     for (uint64_t k = 1; k <= RX_WINDOW && k <= s->rx_next && !ok; k++) {
         uint64_t c = s->rx_next - k;
         if (session_rx_seen(s, c)) continue;
-        if (try_counter(s, &v, aad, c, scratch) == 0) { ok = 1; found = c; }
+        if (try_counter(s, &v, aad, aadlen, c, scratch) == 0) { ok = 1; found = c; }
     }
     if (!ok) return PKT_ERR_AUTH;
 

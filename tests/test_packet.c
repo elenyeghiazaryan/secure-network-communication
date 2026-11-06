@@ -64,18 +64,27 @@ int main(void)
     CHECK(p[9] == 6 && pkt_checksums_ok(p), "still plain IPv4/TCP, checksums valid");
     CHECK(pkt_unprotect(&B, p, m, &k) == PKT_MODIFIED && k == n && !memcmp(p, orig, n), "receiver restores packet");
 
-    /* 3. packets without payload and non-TCP are untouched */
+    /* 3. empty segments are authenticated and non-TCP packets are untouched */
     n = make_pkt(orig, NULL, 0, 1, 0);
     memcpy(p, orig, n);
-    CHECK(pkt_protect(&A, p, n, CAP, &m) == PKT_UNCHANGED && m == n && !memcmp(p, orig, n), "empty-payload (ACK/SYN) packet passes unchanged");
+    CHECK(pkt_unprotect(&B, p, n, &k) == PKT_ERR_TOOSHORT, "untagged empty TCP segment rejected");
+    CHECK(pkt_protect(&A, p, n, CAP, &m) == PKT_MODIFIED && m == n + GCM_TAG_LEN &&
+          pkt_checksums_ok(p), "empty TCP segment gets an authentication tag");
+    CHECK(pkt_unprotect(&B, p, m, &k) == PKT_MODIFIED && k == n && !memcmp(p, orig, n),
+          "tagged empty TCP segment is restored");
+    memcpy(p, orig, n);
+    --p[8]; /* Linux FORWARD hook receives the packet after decrement. */
+    CHECK(pkt_restore_forward_ttl(p) == 0 && p[8] == orig[8], "kernel TTL decrement restored");
+    p[8] = 254;
+    CHECK(pkt_restore_forward_ttl(p) == 0 && p[8] == 255, "original TTL 255 supported");
     uint8_t udp[40]; memcpy(udp, orig, 40); udp[9] = 17;
     CHECK(pkt_protect(&A, udp, 40, CAP, &m) == PKT_UNCHANGED, "non-TCP packet untouched");
 
     /* 4. tampering is detected */
     pair(&A, &B);
     n = make_pkt(orig, payload, 300, 9000, 0);
-    int off[] = { 20 + 20 + 3, 20 + 20 + 299, 20 + 20 + 300 + 5 /* tag */, 24 /* seq in header */, 12 /* src ip */, 21 /* dport */, 33 /* flags */ };
-    const char *nm[] = { "ciphertext byte", "last ciphertext byte", "tag byte", "TCP seq (AAD)", "source IP (AAD)", "TCP port (AAD)", "TCP flags (AAD)" };
+    int off[] = { 20 + 20 + 3, 20 + 20 + 299, 20 + 20 + 300 + 5 /* tag */, 24 /* seq in header */, 12 /* src ip */, 21 /* dport */, 33 /* flags */, 8 /* TTL */, 34 /* TCP window */ };
+    const char *nm[] = { "ciphertext byte", "last ciphertext byte", "tag byte", "TCP seq (AAD)", "source IP (AAD)", "TCP port (AAD)", "TCP flags (AAD)", "IPv4 TTL (AAD)", "TCP window (AAD)" };
     for (size_t i = 0; i < sizeof off / sizeof *off; i++) {
         memcpy(p, orig, n);
         pkt_protect(&A, p, n, CAP, &m);

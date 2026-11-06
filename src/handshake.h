@@ -1,8 +1,8 @@
 /* handshake.h - authenticated Diffie-Hellman handshake between Device1 and Device2.
  *
- *   C -> S : "SGW1" | cnonce[32] | A[256]
- *   S -> C : "SGW1" | snonce[32] | B[256] | HMAC(psk, "SGW1-server"|T)
- *   C -> S : HMAC(psk, "SGW1-client"|T)             T = M1 | M2-without-mac
+ *   C -> S : "SGW2" | cnonce[32] | A[256]
+ *   S -> C : "SGW2" | snonce[32] | B[256] | HMAC(psk, "SGW2-server"|T)
+ *   C -> S : HMAC(psk, "SGW2-client"|T)             T = M1 | M2-without-mac
  *
  * Z = DH shared secret; keys = HKDF-SHA256(salt = cnonce|snonce, ikm = Z).
  * The pre-shared key only authenticates the exchange (stops MITM); it is not

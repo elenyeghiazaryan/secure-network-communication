@@ -10,8 +10,7 @@
  * The nonce is NOT transmitted: both ends keep a synchronised 64-bit packet
  * counter. The receiver recovers the counter of each packet by trial
  * verification inside a bounded window, which also gives replay protection
- * and tolerance to loss/reordering. Immutable header fields (addresses,
- * ports, seq, ack, flags) are bound to the tag as AES-GCM AAD.
+ * and tolerance to loss/reordering. Canonical IP/TCP headers are bound to the tag as AES-GCM AAD.
  */
 #ifndef PACKET_H
 #define PACKET_H
@@ -26,7 +25,7 @@ typedef struct {
 enum { PKT_PARSE_OK = 0, PKT_NOT_APPLICABLE = 1, PKT_MALFORMED = -1 };
 enum {
     PKT_MODIFIED = 0,        /* buffer rewritten, *newlen set               */
-    PKT_UNCHANGED = 1,       /* nothing to do (no payload / not IPv4 TCP)   */
+    PKT_UNCHANGED = 1,       /* nothing to do (not IPv4 TCP)   */
     PKT_ERR_MALFORMED = -1,
     PKT_ERR_NOSPACE = -2,
     PKT_ERR_AUTH = -3,       /* no counter in the window verified the tag   */
@@ -37,6 +36,7 @@ enum {
 };
 
 int  pkt_parse(uint8_t *buf, size_t len, pkt_view_t *v);
+int  pkt_restore_forward_ttl(uint8_t *ip);    /* before transform/checksum */
 void pkt_fix_checksums(uint8_t *buf);           /* IP header + TCP checksum   */
 int  pkt_checksums_ok(const uint8_t *buf);      /* 1 if both are valid        */
 int  pkt_is_selected(const pkt_view_t *v, const uint16_t *ports, size_t nports);

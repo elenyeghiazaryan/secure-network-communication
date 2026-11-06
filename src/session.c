@@ -13,13 +13,16 @@ void session_set_keys(session_t *s, const uint8_t *txk, const uint8_t *txs,
 int session_derive(session_t *s, int is_client, const uint8_t z[DH_PUB_LEN],
                    const uint8_t cnonce[32], const uint8_t snonce[32])
 {
-    static const char info[] = "SGW1 session keys";
+    static const char info[] = "SGW2 session keys";
     uint8_t salt[64], okm[32 + 32 + 4 + 4 + SESSION_ID_LEN];
     const uint8_t *c2s_k = okm, *s2c_k = okm + 32, *c2s_s = okm + 64, *s2c_s = okm + 68;
     memcpy(salt, cnonce, 32); memcpy(salt + 32, snonce, 32);
     if (hkdf_sha256(salt, sizeof salt, z, DH_PUB_LEN, (const uint8_t *)info, sizeof info - 1,
                     okm, sizeof okm))
         return -1;
+    /* Reserve a direction bit so nonce prefixes cannot collide within a session. */
+    okm[64] &= 0x7f;
+    okm[68] |= 0x80;
     if (is_client) session_set_keys(s, c2s_k, c2s_s, s2c_k, s2c_s);
     else           session_set_keys(s, s2c_k, s2c_s, c2s_k, c2s_s);
     memcpy(s->id, okm + 72, SESSION_ID_LEN);
